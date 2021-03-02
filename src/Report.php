@@ -5,68 +5,96 @@ namespace careyshop;
 use think\Route;
 use think\Service;
 
-const DS = DIRECTORY_SEPARATOR;
-
 class Report extends Service
 {
     /**
-     * 获取本地构建文件路径
-     * @return false|string
+     * 获取本地构建路径
+     * @return array
      */
     private function getLocalReportFile()
     {
-        $path = public_path() . 'static';
-        $dirs = scandir($path);
+        $dir = 'static';
+        $file = false;
+        $path = public_path() . $dir;
+        $dirList = scandir($path);
 
-        foreach ($dirs as $value) {
+        foreach ($dirList as $value) {
             if ('.' === $value || '..' === $value) {
                 continue;
             }
 
-            if (!is_dir($path . DS . $value)) {
+            if (!is_dir($path . DIRECTORY_SEPARATOR . $value)) {
                 continue;
             }
 
-            $filePath = $path . DS . $value . DS . 'report.html';
+            $filePath = $path . DIRECTORY_SEPARATOR . $value . DIRECTORY_SEPARATOR . 'report.html';
             if (file_exists($filePath)) {
-                return $filePath;
+                $file = $filePath;
+                $dir .= '/' . $value;
+                break;
             }
         }
 
-        return false;
+        return [$file, $dir];
     }
 
-    private function getContent($path)
+    /**
+     * 获取远程构建路径
+     * @param string $url URL
+     * @return array
+     */
+    private function getUrlReportFile($url)
     {
-        $content = file_get_contents($path);
-        if (false === $content) {
+        $pathInfo = pathinfo($url);
+        return [
+            $url,
+            is_array($pathInfo) ? $pathInfo['dirname'] : '',
+        ];
+    }
+
+    /**
+     * 获取构建文件内容
+     * @param string $file 访问地址
+     * @param string $dir  文件路径
+     * @return string
+     */
+    private function getContent($file, $dir)
+    {
+        $content = file_get_contents($file);
+        if (!is_string($content)) {
             return '读取构建文件失败';
         }
 
         if (preg_match('/window.chartData =(.+?);/', $content, $match)) {
+            $script = '';
             $chartData = @json_decode($match[1], true);
+
             if (is_array($chartData)) {
                 foreach ($chartData as $value) {
-                    $content .= "<script src='${value['label']}'></script>";
+                    if (!stripos($value['label'], 'app.')) {
+                        $script .= "<script src='${dir}/${value['label']}'></script>";
+                    }
                 }
+
+                $content .= $script;
             }
         }
 
-//        dump($content);exit();
-//        return $content;
-        print_r($path);exit();
+        return $content;
     }
 
     public function boot()
     {
         $this->registerRoutes(function (Route $route) {
             $route->get('report', function () {
-                $file = $this->getLocalReportFile();
-                if (false === $file) {
+                $url = urldecode(request()->get('url'));
+                [$file, $dir] = $url ? $this->getUrlReportFile($url) : $this->getLocalReportFile();
+
+                if (!$file) {
                     return '构建文件不存在';
                 }
 
-                return $this->getContent($file);
+                return $this->getContent($file, $dir);
             });
         });
     }
